@@ -1,0 +1,7 @@
+# components/expected/idf_component.yml
+description: "C++17 std::expected polyfill for embedded systems"
+version: "1.0.0"
+url: "https://github.com/enoch-prince/esp-expected-polyfill"
+dependencies:
+  idf:
+    version: ">=5.0"

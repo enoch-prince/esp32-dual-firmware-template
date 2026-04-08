@@ -1,0 +1,13 @@
+# sdkconfig.fw_b
+# Overlay applied on top of sdkconfig.defaults for Firmware B builds.
+#
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fw_b" \
+#          -B build_fw_b build
+
+# Slot identity — processed by main/Kconfig.projbuild
+CONFIG_FIRMWARE_SLOT_B=y
+
+# App version — bump this string for each Firmware B release.
+CONFIG_APP_PROJECT_VER="0.1.0"
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=y

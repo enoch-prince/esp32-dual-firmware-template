@@ -1,0 +1,15 @@
+# sdkconfig.fw_a
+# Overlay applied on top of sdkconfig.defaults for Firmware A builds.
+#
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fw_a" \
+#          -B build_fw_a build
+
+# Slot identity — processed by main/Kconfig.projbuild
+CONFIG_FIRMWARE_SLOT_A=y
+
+# App version — IDF v5+ uses APP_PROJECT_VER (no CONFIG_ prefix in sdkconfig,
+# but sdkconfig files still use the CONFIG_ prefix).
+# Bump this string for each Firmware A release.
+CONFIG_APP_PROJECT_VER="0.1.0"
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=y

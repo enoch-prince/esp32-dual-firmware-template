@@ -1,0 +1,16 @@
+Command: cmake -G Ninja -B /home/epk/sample_project/build_fw_a -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/home/epk/.espressif/tools/python/v6.0/venv/bin/python -DESP_PLATFORM=1 -DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.fw_a -DCCACHE_ENABLE=False /home/epk/sample_project
+Configuration Report                                                                                                                                                           
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Parser Version: 1                                                                                                                                                           
+   Verbosity: default                                                                                                                                                          
+   Defaults policy: sdkconfig                                                                                                                                                  
+   Status: Finished with notifications                                                                                                                                         
+                                                                                                                                                                               
+  Disabled Symbols/Choices With User-Set Value                                                                                                                                 
+   ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   
+    * IDF_TARGET (defined at /home/epk/.espressif/v6.0/esp-idf/Kconfig:68) with user-set value esp32 from /tmp/kconfgen_tmprh5zacn1                                            
+    * ESPTOOLPY_FLASHSIZE (defined at /home/epk/.espressif/v6.0/esp-idf/components/esptool_py/Kconfig.projbuild:136) with user-set value 4MB from /tmp/kconfgen_tmprh5zacn1    
+    * ESP_TLS_SKIP_SERVER_CERT_VERIFY (defined at /home/epk/.espressif/v6.0/esp-idf/components/esp-tls/Kconfig:99) with user-set value n from /tmp/kconfgen_tmprh5zacn1        
+    * NVS_ENCRYPTION (defined at /home/epk/.espressif/v6.0/esp-idf/components/nvs_flash/Kconfig:3) with user-set value y from /tmp/kconfgen_tmprh5zacn1                        
+   ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 

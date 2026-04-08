@@ -1,0 +1,2 @@
+source /home/epk/sample_project/build_fw_a/bootloader/gdbinit/symbols
+source /home/epk/sample_project/build_fw_a/bootloader/gdbinit/connect
