@@ -70,10 +70,17 @@ echo "$SCRIPT_DIR"
 cd "$SCRIPT_DIR"
 
 # ── Partition offsets (must match partitions/partitions.csv) ──────────────
-OTA_0_OFFSET="0x10000"
-OTA_1_OFFSET="0x1D0000"
-PARTITION_OFFSET="0x8000"
-BOOTLOADER_OFFSET="0x1000"
+# --- OLD
+# OTA_0_OFFSET="0x10000"
+# OTA_1_OFFSET="0x1D0000"
+# PARTITION_OFFSET="0x8000"
+# BOOTLOADER_OFFSET="0x1000"
+
+# -- For a big Bootloader
+OTA_0_OFFSET="0x20000"
+OTA_1_OFFSET="0x1E0000"
+PARTITION_OFFSET="0x18000"
+BOOTLOADER_OFFSET="0x18000"
 
 # ── Build Firmware A ──────────────────────────────────────────────────────
 if $BUILD_A; then

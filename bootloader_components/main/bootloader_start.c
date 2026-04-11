@@ -21,6 +21,7 @@
 #include "esp_log.h"
 #include "esp_rom_gpio.h"
 #include "hal/gpio_types.h"
+#include "hal/gpio_hal.h"
 
 /* ── Configuration ─────────────────────────────────────────────────────────── */
 
@@ -47,7 +48,7 @@ static bool fw_select_pin_active(void)
     esp_rom_gpio_pad_select_gpio(FW_SELECT_GPIO);
     esp_rom_gpio_pad_pullup_only(FW_SELECT_GPIO);
     esp_rom_delay_us(GPIO_SETTLE_US);
-    return (esp_rom_gpio_get_level(FW_SELECT_GPIO) == 0);
+    return (gpio_ll_get_level(GPIO_HAL_GET_HW(FW_SELECT_GPIO), FW_SELECT_GPIO) == 0);
 }
 
 /* ── Entry point ───────────────────────────────────────────────────────────── */

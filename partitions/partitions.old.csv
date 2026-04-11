@@ -1,0 +1,11 @@
+# ESP32-S2 Dual Firmware Partition Table (4MB Flash)
+# Partition table offset increased to 0x10000 to accommodate larger bootloader
+# APP partitions aligned to 0x10000 boundaries as required by ESP32
+# Name,     Type,  SubType,   Offset,    Size,     Flags
+nvs,        data,  nvs,       0x11000,   0x4000,
+otadata,    data,  ota,       0x15000,   0x2000,
+phy_init,   data,  phy,       0x17000,   0x1000,
+ota_0,      app,   ota_0,     0x20000,   0x1C0000,
+ota_1,      app,   ota_1,     0x1E0000,  0x1C0000,
+nvs_key,    data,  nvs_keys,  0x3A0000,  0x1000,   encrypted
+spiffs,     data,  spiffs,    0x3A1000,  0x5F000,

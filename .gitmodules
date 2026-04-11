@@ -1,0 +1,6 @@
+[submodule "external/etl_src"]
+	path = external/etl_src
+	url = https://github.com/ETLCPP/etl.git
+[submodule "external/jsmn_src"]
+	path = external/jsmn_src
+	url = https://github.com/zserge/jsmn.git

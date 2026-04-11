@@ -54,8 +54,9 @@ idf_component_register(
         esp_wifi
         esp_event
         esp_netif
-        # jsmn
-        # etl
+        esp_mbedtls
+        jsmn
+        etl
         # esp_log
     EMBED_TXTFILES
         certs/server_ca.pem

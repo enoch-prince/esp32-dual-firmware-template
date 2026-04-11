@@ -35,10 +35,10 @@ using Result = tl::expected<T, Error>;
 /* ── Manifest ───────────────────────────────────────────────────────────── */
 struct FirmwareInfo {
     // C++17: Use ETL fixed strings instead of std::string to avoid heap alloc
-    etl::string_fixed<32> version;      ///< semver string, e.g. "2.1.0"
-    etl::string_fixed<256> url;          ///< HTTPS URL of the binary
-    etl::string_fixed<64> sha256_hex;   ///< lowercase hex SHA-256 of the binary
-    etl::string_fixed<128> sig_b64;      ///< base64-encoded ECDSA-P256 signature
+    etl::string<32> version;      ///< semver string, e.g. "2.1.0"
+    etl::string<256> url;          ///< HTTPS URL of the binary
+    etl::string<64> sha256_hex;   ///< lowercase hex SHA-256 of the binary
+    etl::string<128> sig_b64;      ///< base64-encoded ECDSA-P256 signature
     uint32_t    min_hw_ver{0};
 };
 

@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <string_view>
-#include <vector>
+#include <etl/vector.h>
 
 namespace health_monitor {
 

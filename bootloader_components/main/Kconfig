@@ -2,7 +2,7 @@ menu "Bootloader welcome message"
 
     config MELLO_BOOTLOADER_WELCOME_MESSAGE
         string "Bootloader welcome message"
-        default "Custom bootloader message defined in the KConfig file."
+        default ""
         help
             Booting up Mello 🤖😎🥕
 endmenu

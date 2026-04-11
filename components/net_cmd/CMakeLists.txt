@@ -1,19 +1,18 @@
 idf_component_register(
     SRCS
         "http_cmd.cpp"
-        "mqtt_cmd.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES
         boot_ctrl
         ota_manager
-        # esp_http_server   # httpd_*
-        # esp_mqtt              # esp_mqtt_client — enabled via CONFIG_MQTT_ENABLED=y
+        esp_http_server
         # esp_tls           # ✅ For HTTPS/TLS support
         # esp_log           # ESP_LOGI etc. (correct name in IDF v5+)
         # json              # cJSON
-        # jsmn
-        mbedtls           # HMAC-SHA256
+        etl
+        jsmn
+        mbedtls          # PSA crypto headers for HMAC verification
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -std=gnu++17)

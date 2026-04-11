@@ -397,19 +397,19 @@ ota_manager.cpp
 HTTPS OTA with zero-heap JSON parsing (jsmn instead of cJSON)
 */
 #include "ota_manager.hpp"
-#include <cstring>
+#include <array>
+#include <algorithm>
 #include <charconv>
-// #include <array>
+#include <cctype>
+#include <cstring>
+#include <span>
 #include "jsmn.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_http_client.h"
 #include "esp_app_desc.h"
-#include "mbedtls/pk.h"
-#include "mbedtls/sha256.h"
-#include "mbedtls/base64.h"
-#include "mbedtls/error.h"
+#include <psa/crypto.h>
 
 static const char *TAG = "ota_manager";
 
@@ -417,6 +417,137 @@ namespace {
 constexpr size_t kDownloadBufSize = 4096;
 constexpr size_t kMaxJsonTokens = 128;  // Sufficient for manifest parsing
 constexpr size_t kManifestMaxSize = 2048;  // Max manifest JSON size
+
+static bool ensure_psa_initialized() noexcept
+{
+    static bool initialized = false;
+    if (initialized) {
+        return true;
+    }
+
+    if (psa_crypto_init() == PSA_SUCCESS) {
+        initialized = true;
+        return true;
+    }
+
+    return false;
+}
+
+static int decode_hex_char(char c) noexcept
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static std::string_view strip_pem(std::string_view pem,
+                                 std::string_view begin_marker,
+                                 std::string_view end_marker) noexcept
+{
+    size_t begin = pem.find(begin_marker);
+    if (begin == std::string_view::npos) {
+        return {};
+    }
+    begin += begin_marker.size();
+
+    size_t end = pem.find(end_marker, begin);
+    if (end == std::string_view::npos) {
+        return {};
+    }
+
+    std::string_view body = pem.substr(begin, end - begin);
+    size_t first = 0;
+    while (first < body.size() && std::isspace(static_cast<unsigned char>(body[first]))) {
+        ++first;
+    }
+    size_t last = body.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(body[last - 1]))) {
+        --last;
+    }
+
+    return body.substr(first, last - first);
+}
+
+static bool base64_decode(std::string_view src,
+                          std::array<uint8_t, 512> &dst,
+                          size_t &out_len) noexcept
+{
+    static const int8_t table[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    };
+
+    uint32_t buffer = 0;
+    int bits = 0;
+    out_len = 0;
+    bool saw_padding = false;
+
+    for (char c : src) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc == '=') {
+            saw_padding = true;
+            continue;
+        }
+        if (uc == '\r' || uc == '\n' || uc == ' ' || uc == '\t') {
+            continue;
+        }
+        if (saw_padding) {
+            return false;
+        }
+
+        int8_t value = table[uc];
+        if (value < 0) {
+            return false;
+        }
+
+        buffer = (buffer << 6) | static_cast<uint32_t>(value);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (out_len >= dst.size()) {
+                return false;
+            }
+            dst[out_len++] = static_cast<uint8_t>((buffer >> bits) & 0xFF);
+        }
+    }
+
+    return true;
+}
+
+static bool parse_public_key_pem(std::string_view pem,
+                                 std::array<uint8_t, 512> &der,
+                                 size_t &der_len) noexcept
+{
+    const std::string_view public_key_begin = "-----BEGIN PUBLIC KEY-----";
+    const std::string_view public_key_end = "-----END PUBLIC KEY-----";
+    const std::string_view ec_key_begin = "-----BEGIN EC PUBLIC KEY-----";
+    const std::string_view ec_key_end = "-----END EC PUBLIC KEY-----";
+
+    std::string_view body = strip_pem(pem, public_key_begin, public_key_end);
+    if (body.empty()) {
+        body = strip_pem(pem, ec_key_begin, ec_key_end);
+    }
+    if (body.empty()) {
+        return false;
+    }
+
+    return base64_decode(body, der, der_len);
+}
 
 /* ── JSMN Helper: Find JSON value by key ───────────────────────────────── */
 [[nodiscard]] const char* find_json_value(
@@ -601,54 +732,61 @@ https_get_buffer(std::string_view url, std::string_view ca_pem,
     return buffer;
 }
 
-/* ── ECDSA-P256 signature verification (mbedTLS) ───────────────────────── */
+/* ── ECDSA-P256 signature verification (PSA) ─────────────────────────── */
 [[nodiscard]] ota_manager::Result<void>
 verify_signature(etl::span<const uint8_t> binary,
                  std::string_view sig_b64,
                  std::string_view pub_pem) noexcept
 {
     using namespace ota_manager;
-    
-    // 1. Base64-decode the signature
-    etl::array<uint8_t, 256> sig_buf{};
+
+    if (!ensure_psa_initialized()) {
+        return tl::unexpected(Error::SignatureInvalid);
+    }
+
+    std::array<uint8_t, 512> sig_buf{};
     size_t sig_len = 0;
-    if (mbedtls_base64_decode(sig_buf.data(), sig_buf.size(), &sig_len,
-            reinterpret_cast<const uint8_t*>(sig_b64.data()),
-            sig_b64.size()) != 0) {
+    if (!base64_decode(sig_b64, sig_buf, sig_len)) {
         return tl::unexpected(Error::SignatureInvalid);
     }
-    
-    // 2. SHA-256 hash of the binary
+
     etl::array<uint8_t, 32> hash{};
-    mbedtls_sha256(binary.data(), binary.size(), hash.data(), 0);
-    
-    // 3. Load the public key
-    mbedtls_pk_context pk;
-    mbedtls_pk_init(&pk);
-    
-    int rc = mbedtls_pk_parse_public_key(
-        &pk,
-        reinterpret_cast<const uint8_t*>(pub_pem.data()),
-        pub_pem.size() + 1);
-    
-    if (rc != 0) {
-        mbedtls_pk_free(&pk);
+    size_t hash_len = 0;
+    if (psa_hash_compute(PSA_ALG_SHA_256,
+                         binary.data(), binary.size(),
+                         hash.data(), hash.size(),
+                         &hash_len) != PSA_SUCCESS || hash_len != hash.size()) {
         return tl::unexpected(Error::SignatureInvalid);
     }
-    
-    // 4. Verify
-    rc = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256,
-                           hash.data(), hash.size(),
-                           sig_buf.data(), sig_len);
-    mbedtls_pk_free(&pk);
-    
-    if (rc != 0) {
-        char err[128];
-        mbedtls_strerror(rc, err, sizeof(err));
-        ESP_LOGE(TAG, "Signature verification failed: %s", err);
+
+    std::array<uint8_t, 512> pub_der{};
+    size_t pub_der_len = 0;
+    if (!parse_public_key_pem(pub_pem, pub_der, pub_der_len)) {
         return tl::unexpected(Error::SignatureInvalid);
     }
-    
+
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_VERIFY_HASH);
+    psa_set_key_algorithm(&attrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attrs, 256);
+
+    mbedtls_svc_key_id_t key_id{};
+    if (psa_import_key(&attrs, pub_der.data(), pub_der_len, &key_id) != PSA_SUCCESS) {
+        return tl::unexpected(Error::SignatureInvalid);
+    }
+
+    psa_status_t status = psa_verify_hash(key_id,
+                                         PSA_ALG_ECDSA(PSA_ALG_SHA_256),
+                                         hash.data(), hash_len,
+                                         sig_buf.data(), sig_len);
+    psa_destroy_key(key_id);
+
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "Signature verification failed (PSA)");
+        return tl::unexpected(Error::SignatureInvalid);
+    }
+
     return {};
 }
 
@@ -724,17 +862,18 @@ download_and_flash(const ota_manager::FirmwareInfo &info,
     
     // ECDSA signature verification
     const uint8_t *flash_ptr = nullptr;
-    spi_flash_mmap_handle_t mmap_handle{};
+    esp_partition_mmap_handle_t mmap_handle{};
     if (esp_partition_mmap(target_partition, 0,
                            static_cast<size_t>(total_written),
-                           SPI_FLASH_MMAP_DATA,
+                           ESP_PARTITION_MMAP_DATA,
                            reinterpret_cast<const void**>(&flash_ptr),
                            &mmap_handle) == ESP_OK) {
         auto sig_result = verify_signature(
             etl::span<const uint8_t>(flash_ptr,
                                      static_cast<size_t>(total_written)),
-            info.sig_b64, ecdsa_pub_pem);
-        spi_flash_munmap(mmap_handle);
+            std::string_view(info.sig_b64.data(), info.sig_b64.size()),
+            ecdsa_pub_pem);
+        esp_partition_munmap(mmap_handle);
         
         if (!sig_result) {
             ESP_LOGE(TAG, "Signature check failed – aborting update");
@@ -791,7 +930,8 @@ Result<void> check_and_update(const Config &cfg,
     }
     
     // 3. Version gate
-    if (!is_newer(info.version, installed_ver)) {
+    if (!is_newer(std::string_view(info.version.data(), info.version.size()),
+                   installed_ver)) {
         ESP_LOGI(TAG, "Slot %s is already up-to-date (%s)",
                  boot_ctrl::slot_name(target_slot).data(), installed_ver);
         return tl::unexpected(Error::VersionCurrent);

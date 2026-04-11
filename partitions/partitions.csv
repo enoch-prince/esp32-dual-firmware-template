@@ -1,9 +1,8 @@
-# ESP32-S2 Dual Firmware Partition Table (4MB Flash)
-# Name,     Type,  SubType,   Offset,    Size,     Flags
-nvs,        data,  nvs,       0x9000,    0x4000,
-otadata,    data,  ota,       0xd000,    0x2000,
-phy_init,   data,  phy,       0xf000,    0x1000,
-ota_0,      app,   ota_0,     0x10000,   0x1C0000,
-ota_1,      app,   ota_1,     0x1D0000,  0x1C0000,
-nvs_key,    data,  nvs_keys,  0x390000,  0x1000,   encrypted
-spiffs,     data,  spiffs,    0x391000,  0x6F000,
+# Name,   Type, SubType, Offset,  Size, Flags
+otadata,data,ota,0x1E000,0x2000,
+ota_0,app,ota_0,0x20000,0x1C0000,
+ota_1,app,ota_1,0x1E0000,0x1C0000,
+nvs,data,nvs,0x3A0000,0x4000,
+phy_init,data,phy,0x3A4000,0x1000,
+nvs_key,data,nvs_keys,0x3A5000,0x1000,
+littlefs,data,littlefs,0x3A6000,0x5A000,

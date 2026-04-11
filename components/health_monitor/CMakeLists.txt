@@ -4,6 +4,7 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
+        etl
         boot_ctrl
         # esp_log
         esp_timer        # not directly used but pulled in by FreeRTOS timers

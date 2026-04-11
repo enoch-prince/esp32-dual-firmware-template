@@ -13,13 +13,25 @@ CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 # Correct symbol names in IDF v5+
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/partitions.csv"
-CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_PARTITION_TABLE_OFFSET=0x18000
 
 # ─── OTA / bootloader rollback ────────────────────────────────────────────────
 # These live under the BOOTLOADER_ namespace in IDF v5+
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
-CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
-CONFIG_BOOTLOADER_APP_SECURE_VERSION=1
+# DISABLED: Not required since boot_ctrl and ota_manager handle firmware switching
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n
+# CONFIG_BOOTLOADER_APP_SECURE_VERSION=1
+
+# ─── Bootloader optimization ──────────────────────────────────────────────────
+# Reduce image validation to minimum necessary for OTA
+CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y
+CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n
+
+# Disable ESP32 ROM logging during bootloader
+CONFIG_BOOTLOADER_ESP32_KEEP_IN_INIT=n
+
+# Disable console/UART output in bootloader (significant size save)
+CONFIG_BOOTLOADER_CFG_LOG_BOOTLOADER_LEVEL_ERROR=y
 
 # ─── Security (disabled by default — enable for production) ───────────────────
 # These burn eFuses. Irreversible. Test on a sacrificial device first.
@@ -39,8 +51,9 @@ CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=n
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 # Correct symbol names — these are choice-based in IDF v5+
+# Reduce bootloader logging to ERROR level to save max space
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
-CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL_ERROR=y
 
 # ─── C++ standard library ─────────────────────────────────────────────────────
 # Disable C++ exceptions and RTTI
@@ -58,3 +71,9 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # ─── MQTT ─────────────────────────────────────────────────────────────────────
 # Enable the MQTT component (disabled by default in some IDF versions)
 CONFIG_MQTT_ENABLED=y
+
+# ─── MBEDTLS ─────────────────────────────────────────────────────────────────────
+CONFIG_MBEDTLS=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_ECDSA_DETERMINISTIC=y
+CONFIG_MBEDTLS_ECP_DP_SECP256R1_ENABLED=y

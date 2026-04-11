@@ -1,0 +1,6 @@
+name: etl
+version: "20.47.1"
+description: "Embedded Template Library for C++17"
+url: "https://github.com/ETLCPP/etl"
+dependencies:
+  idf: ">=4.1.0"

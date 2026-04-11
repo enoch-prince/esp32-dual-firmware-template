@@ -19,17 +19,16 @@ dependencies:
   espressif/esp_mqtt: "^2.0"
   espressif/esp_http_client: "^1.0"
   espressif/esp_http_server: "^1.0"
-  espressif/nvs_flash: "^2.0"
-
-  # Add git components
-  etl:
-    git: https://github.com/ETLCPP/etl.git
-    version: v20.47.1
-  
-  jsmn:
-    git: https://github.com/zserge/jsmn.git
-    version: master
+  # espressif/nvs_flash: "^2.0"
+  # espressif/esp_mbedtls: "^1.0"
+  # espressif/esp_crypto: "^1.0"   # ✅ Optional: ESP-IDF crypto wrappers
 
   # ✅ Add dependency on your local expected component
   expected:
     path: ../components/expected
+  
+  etl:
+    path: ../components/etl
+  
+  jsmn:
+    path: ../components/jsmn

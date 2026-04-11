@@ -23,10 +23,10 @@ namespace {
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 
-std::vector<health_monitor::ProbeEntry> g_probes;
-health_monitor::Config                  g_cfg;
-TaskHandle_t                            g_task{nullptr};
-std::atomic<uint8_t>                    g_fail_count{0};
+etl::vector<health_monitor::ProbeEntry, 16> g_probes;
+health_monitor::Config                      g_cfg;
+TaskHandle_t                                g_task{nullptr};
+std::atomic<uint8_t>                        g_fail_count{0};
 
 /* ── Monitor task ────────────────────────────────────────────────────────── */
 
