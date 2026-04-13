@@ -1,10 +1,31 @@
 dependencies:
+  etl:
+    dependencies: []
+    source:
+      path: components/etl
+      type: local
+    version: 20.47.1
+  expected:
+    dependencies: []
+    source:
+      path: components/expected
+      type: local
+    version: 1.0.0
   idf:
     source:
       type: idf
     version: 6.0.0
+  jsmn:
+    dependencies: []
+    source:
+      path: components/jsmn
+      type: local
+    version: 1.1.0
 direct_dependencies:
+- etl
+- expected
 - idf
-manifest_hash: 55bbbbe1158e72f3488e0415ba5372bce7cc3481f278fb26f1e5e96416c1d4c4
+- jsmn
+manifest_hash: e07b865ee422d1464109bc46dc80555d41540fe3ac0950ed3d9b77a55b0f7e50
 target: esp32
 version: 3.0.0
