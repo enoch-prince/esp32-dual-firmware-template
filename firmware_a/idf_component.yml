@@ -16,9 +16,9 @@ dependencies:
   #   public: true
   # espressif/esp-idf-cxx: ^1.0.2-beta
   # espressif/cjson: ^1.7.19~2
-  espressif/esp_mqtt: "^2.0"
-  espressif/esp_http_client: "^1.0"
-  espressif/esp_http_server: "^1.0"
+  # espressif/esp_mqtt: "^2.0"
+  # espressif/esp_http_client: "^1.0"
+  # espressif/esp_http_server: "^1.0"
   # espressif/nvs_flash: "^2.0"
   # espressif/esp_mbedtls: "^1.0"
   # espressif/esp_crypto: "^1.0"   # ✅ Optional: ESP-IDF crypto wrappers

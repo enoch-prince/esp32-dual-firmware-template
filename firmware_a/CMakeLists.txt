@@ -54,7 +54,7 @@ idf_component_register(
         esp_wifi
         esp_event
         esp_netif
-        esp_mbedtls
+        mbedtls
         jsmn
         etl
         # esp_log
