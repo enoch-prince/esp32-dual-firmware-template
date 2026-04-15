@@ -638,42 +638,58 @@ parse_manifest(const char *json_str, size_t json_len, boot_ctrl::Slot target) no
     if (fw_start < 0) {
         return tl::unexpected(Error::ManifestParse);
     }
-    
+
+    // Narrow the token window to only those inside the firmware object.
+    // Token offsets are ABSOLUTE into json_str, so find_json_value must
+    // always receive json_str as its base pointer.  We restrict the search
+    // to tokens whose start falls within [fw_start, fw_end) so that keys
+    // in sibling firmware objects are never matched.
+    int fw_tok_first = -1;
+    int fw_tok_last  = num_tokens;   // exclusive upper bound
+    for (int i = 0; i < num_tokens; ++i) {
+        if (fw_tok_first < 0 && tokens[i].start >= fw_start) {
+            fw_tok_first = i;
+        }
+        if (fw_tok_first >= 0 && tokens[i].start >= fw_end) {
+            fw_tok_last = i;
+            break;
+        }
+    }
+    if (fw_tok_first < 0) {
+        return tl::unexpected(Error::ManifestParse);
+    }
+
     // Extract fields from firmware object
     size_t len = 0;
     FirmwareInfo info;
-    
+
     // Clear all strings first
     info.version.clear();
     info.url.clear();
     info.sha256_hex.clear();
     info.sig_b64.clear();
-    
-    // Parse each field (jsmn returns views into original JSON)
-    const char *val = find_json_value(json_str + fw_start, 
-                                       tokens.data(), num_tokens, 
-                                       "version", len);
+
+    const jsmntok_t *fw_tokens = tokens.data() + fw_tok_first;
+    const int        fw_ntok   = fw_tok_last - fw_tok_first;
+
+    // Parse each field — base pointer is always json_str (absolute offsets)
+    const char *val = find_json_value(json_str, fw_tokens, fw_ntok,
+                                      "version", len);
     if (val && len < info.version.capacity()) {
         info.version.append(val, len);
     }
-    
-    val = find_json_value(json_str + fw_start, 
-                          tokens.data(), num_tokens, 
-                          "url", len);
+
+    val = find_json_value(json_str, fw_tokens, fw_ntok, "url", len);
     if (val && len < info.url.capacity()) {
         info.url.append(val, len);
     }
-    
-    val = find_json_value(json_str + fw_start, 
-                          tokens.data(), num_tokens, 
-                          "sha256", len);
+
+    val = find_json_value(json_str, fw_tokens, fw_ntok, "sha256", len);
     if (val && len < info.sha256_hex.capacity()) {
         info.sha256_hex.append(val, len);
     }
-    
-    val = find_json_value(json_str + fw_start, 
-                          tokens.data(), num_tokens, 
-                          "signature", len);
+
+    val = find_json_value(json_str, fw_tokens, fw_ntok, "signature", len);
     if (val && len < info.sig_b64.capacity()) {
         info.sig_b64.append(val, len);
     }
