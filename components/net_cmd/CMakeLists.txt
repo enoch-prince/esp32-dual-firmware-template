@@ -1,15 +1,15 @@
 idf_component_register(
     SRCS
         "http_cmd.cpp"
+        # mqtt_cmd.cpp excluded: espressif/esp-mqtt not available in IDF v6 local env.
+        # Re-add once component registry is configured:
+        #   idf.py add-dependency "espressif/esp-mqtt>=2.0.0"
     INCLUDE_DIRS
         "include"
     REQUIRES
         boot_ctrl
         ota_manager
         esp_http_server
-        # esp_tls           # ✅ For HTTPS/TLS support
-        # esp_log           # ESP_LOGI etc. (correct name in IDF v5+)
-        # json              # cJSON
         etl
         jsmn
         mbedtls          # PSA crypto headers for HMAC verification
