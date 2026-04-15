@@ -26,6 +26,6 @@ direct_dependencies:
 - expected
 - idf
 - jsmn
-manifest_hash: e07b865ee422d1464109bc46dc80555d41540fe3ac0950ed3d9b77a55b0f7e50
+manifest_hash: 9471a42a9e319010e010f25c68d9ab40e115d381294d7ee76aaf834060874171
 target: esp32
 version: 3.0.0
