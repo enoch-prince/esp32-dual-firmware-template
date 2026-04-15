@@ -15,3 +15,12 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   # espressif/esp-idf-cxx: ^1.0.2-beta
+
+  expected:
+    path: ../components/expected
+
+  etl:
+    path: ../components/etl
+
+  jsmn:
+    path: ../components/jsmn
