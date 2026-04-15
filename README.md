@@ -59,5 +59,16 @@ sudo modprobe usbserial
 
 Flash Firmware A
 ```bash
-
+./build_and_flash.sh --flash-fw-a
 ```
+
+Flash Firmware B
+```bash
+./build_and_flash.sh --flash-fw-b
+```
+
+Help
+```bash
+./build_and_flash.sh --help
+```
+
