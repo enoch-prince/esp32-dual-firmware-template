@@ -12,6 +12,6 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/home/epk/sample_project/build"
+    "--compile-commands-dir=/home/epk/sample_project/build_fw_a"
   ]
 }
