@@ -78,9 +78,10 @@ Desktop.ini
 *.sln.docstates # Visual Studio
 
 build_fw_a/
-**/build_fw_a/
+**/build_fw_a/**
 build_fw_b/
-**/build_fw_b/
+**/build_fw_b/**
 *:Zone.Identifier
 external/
-firmware/certs/
+firmware_a/certs/
+firmware_b/certs/
