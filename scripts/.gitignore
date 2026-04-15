@@ -1,0 +1,4 @@
+# OTA server runtime data — never commit keys or device binaries
+ota_data/
+servenv/
+.pyw
