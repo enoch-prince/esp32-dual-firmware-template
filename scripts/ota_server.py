@@ -435,12 +435,20 @@ def api_trigger():
     """
     Sends an OTA or slot-switch command to a running device.
 
+    Device routes (http_cmd.cpp):
+      POST /cmd/update?slot=A|B   — pull OTA from manifest and write to target slot
+      POST /cmd/switch?fw=A|B     — switch active slot and reboot
+
     Body (JSON or form):
       device_ip:   IP of the device (e.g. "192.168.1.42")
       device_port: HTTP cmd server port (default: 8080)
       command:     "ota" or "switch"
-      slot:        (for "switch") "firmware_a" or "firmware_b"
+      variant:     (for "ota")    "fw_a" or "fw_b" — which slot to update
+      slot:        (for "switch") "firmware_a" or "firmware_b" — target slot
       hmac_secret: shared secret (read from firmware_a/certs/hmac_secret.txt if omitted)
+
+    HMAC is computed over the full URI including query string, matching the device's
+    verify_hmac() which uses req->uri (which includes the query string in ESP-IDF httpd).
     """
     import urllib.request
 
@@ -448,6 +456,7 @@ def api_trigger():
     device_ip   = (data.get("device_ip")   or "").strip()
     device_port = int(data.get("device_port") or 8080)
     command     = (data.get("command")     or "ota").strip()
+    variant     = (data.get("variant")     or "fw_a").strip()
     slot        = (data.get("slot")        or "").strip()
     secret      = (data.get("hmac_secret") or "").strip()
 
@@ -463,16 +472,23 @@ def api_trigger():
             return jsonify(error="hmac_secret not provided and not found in firmware_a/certs/"), 400
 
     if command == "ota":
-        method, path = "POST", "/ota"
-        body = b""
+        # /cmd/update?slot=A  (fw_a → A, fw_b → B)
+        slot_char = "A" if variant == "fw_a" else "B"
+        method = "POST"
+        path   = f"/cmd/update?slot={slot_char}"
+        body   = b""
     elif command == "switch":
         if not slot:
             return jsonify(error="slot required for switch command"), 400
-        method, path = "POST", "/switch"
-        body = json.dumps({"slot": slot}).encode()
+        # /cmd/switch?fw=A|B  ("firmware_a" → A, "firmware_b" → B)
+        fw_char = "A" if slot == "firmware_a" else "B"
+        method = "POST"
+        path   = f"/cmd/switch?fw={fw_char}"
+        body   = b""
     else:
         return jsonify(error=f"unknown command '{command}'"), 400
 
+    # HMAC must cover the full URI (path + query string) to match req->uri on device
     token, ts = make_hmac_token(method, path, secret)
     url = f"http://{device_ip}:{device_port}{path}"
 
@@ -696,15 +712,16 @@ async function doTrigger(variant, command) {
     const r = await fetch(`${SERVER}/api/trigger`, {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ device_ip:ip, device_port:port, command })
+      body:JSON.stringify({ device_ip:ip, device_port:port, command, variant })
     });
     const j = await r.json();
-    if (r.ok) showMsg(msg, "ok", `✓ ${command} sent (HTTP ${j.status})`);
+    if (r.ok) showMsg(msg, "ok", `✓ ${command} sent → /cmd/update (HTTP ${j.status})`);
     else      showMsg(msg, "err", j.error || JSON.stringify(j));
   } catch(e) { showMsg(msg, "err", e.message); }
 }
 
 async function doSwitch(variant) {
+  // Switch TO the other slot (pressing fw_a card switches device to fw_b, and vice versa)
   const slot = variant === "fw_a" ? "firmware_b" : "firmware_a";
   const msg  = document.getElementById("trig-msg-" + variant);
   const ip   = document.getElementById("ip-"   + variant).value.trim();
@@ -714,10 +731,10 @@ async function doSwitch(variant) {
     const r = await fetch(`${SERVER}/api/trigger`, {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ device_ip:ip, device_port:port, command:"switch", slot })
+      body:JSON.stringify({ device_ip:ip, device_port:port, command:"switch", slot, variant })
     });
     const j = await r.json();
-    if (r.ok) showMsg(msg, "ok", `✓ Switch→${slot} sent (HTTP ${j.status})`);
+    if (r.ok) showMsg(msg, "ok", `✓ Switch→${slot} sent → /cmd/switch (HTTP ${j.status})`);
     else      showMsg(msg, "err", j.error || JSON.stringify(j));
   } catch(e) { showMsg(msg, "err", e.message); }
 }
@@ -740,10 +757,36 @@ function showMsg(el, type, text) {
   el.style.display = "block";
 }
 
+function updateCardStatus(variant, info) {
+  const card = document.getElementById("card-" + variant);
+  if (!card) return false;
+
+  const label = variant === "fw_a" ? "Firmware A" : "Firmware B";
+  const badge = info.binary_present
+    ? `<span class="badge badge-ok">✓ binary</span>`
+    : `<span class="badge badge-miss">no binary</span>`;
+  card.querySelector("h2").innerHTML = `${label} ${badge}`;
+
+  const cells = card.querySelectorAll("table td:nth-child(2)");
+  cells[0].innerHTML = `<code>${info.version || "—"}</code>`;
+  cells[1].innerHTML = `<code>${shortHash(info.sha256)}</code>`;
+  cells[2].innerHTML = `<code>${info.signature ? info.signature.slice(0,20)+"…" : "—"}</code>`;
+  cells[3].textContent = fmtSize(info.binary_size);
+  cells[4].textContent = info.uploaded_at || "—";
+  cells[5].innerHTML = `<a href="${info.manifest_url}" target="_blank" style="color:#e94560">${info.manifest_url}</a>`;
+
+  return true;
+}
+
 async function refresh() {
   const status = await fetchStatus();
   const container = document.getElementById("cards");
-  container.innerHTML = VARIANTS.map(v => renderCard(v, status.variants[v])).join("");
+  VARIANTS.forEach(v => {
+    const info = status.variants[v];
+    if (!updateCardStatus(v, info)) {
+      container.insertAdjacentHTML("beforeend", renderCard(v, info));
+    }
+  });
 }
 
 const VARIANTS = ["fw_a", "fw_b"];
