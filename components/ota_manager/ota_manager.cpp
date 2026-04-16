@@ -781,6 +781,26 @@ verify_signature(etl::span<const uint8_t> binary,
         return tl::unexpected(Error::SignatureInvalid);
     }
 
+    // PSA expects the raw uncompressed EC point (04 || X || Y, 65 bytes), not the
+    // SubjectPublicKeyInfo DER that PEM files carry.  Locate the BIT STRING that
+    // wraps the point: tag=0x03, length=0x42, unused-bits=0x00, then 0x04 marker.
+    const uint8_t *key_bytes = pub_der.data();
+    size_t         key_bytes_len = pub_der_len;
+    for (size_t i = 0; i + 4 <= pub_der_len; ++i) {
+        if (pub_der[i]   == 0x03 &&   // BIT STRING tag
+            pub_der[i+1] == 0x42 &&   // content length = 66
+            pub_der[i+2] == 0x00 &&   // unused bits = 0
+            pub_der[i+3] == 0x04) {   // uncompressed point marker
+            key_bytes     = pub_der.data() + i + 3;  // 04 || X || Y
+            key_bytes_len = 65;
+            break;
+        }
+    }
+    if (key_bytes_len != 65) {
+        ESP_LOGE(TAG, "Could not locate EC uncompressed point in public key DER");
+        return tl::unexpected(Error::SignatureInvalid);
+    }
+
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_VERIFY_HASH);
     psa_set_key_algorithm(&attrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
@@ -788,7 +808,7 @@ verify_signature(etl::span<const uint8_t> binary,
     psa_set_key_bits(&attrs, 256);
 
     mbedtls_svc_key_id_t key_id{};
-    if (psa_import_key(&attrs, pub_der.data(), pub_der_len, &key_id) != PSA_SUCCESS) {
+    if (psa_import_key(&attrs, key_bytes, key_bytes_len, &key_id) != PSA_SUCCESS) {
         return tl::unexpected(Error::SignatureInvalid);
     }
 
