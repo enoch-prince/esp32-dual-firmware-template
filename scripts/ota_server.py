@@ -606,7 +606,7 @@ function renderCard(variant, info) {
     <h3>Upload binary</h3>
     <form id="upload-${variant}" onsubmit="doUpload(event,'${variant}')">
       <label>Firmware .bin</label>
-      <input type="file" id="file-${variant}" name="file" accept=".bin" required
+      <input type="file" id="file-${variant}" name="file" accept=".bin"
              style="display:none" onchange="fileChanged(this,'${variant}')">
       <div class="file-zone" onclick="document.getElementById('file-${variant}').click()">
         <div class="file-zone-hint">Click to choose a .bin file</div>
@@ -651,9 +651,14 @@ function renderCard(variant, info) {
 async function doUpload(evt, variant) {
   evt.preventDefault();
   const form = evt.target;
-  const fd = new FormData(form);
+  const fileInput = document.getElementById("file-" + variant);
   const msg = document.getElementById("upload-msg-" + variant);
   msg.style.display = "none";
+  if (!fileInput.files || !fileInput.files.length) {
+    showMsg(msg, "err", "Please select a .bin file first");
+    return;
+  }
+  const fd = new FormData(form);
   try {
     const r = await fetch(`${SERVER}/api/upload/${variant}`, { method:"POST", body:fd });
     const j = await r.json();
@@ -719,6 +724,7 @@ async function doSwitch(variant) {
 
 function fileChanged(input, variant) {
   const nameEl = document.getElementById("file-name-" + variant);
+  console.log(variant, "clicked | ", "Input: ", input);
   if (input.files && input.files.length) {
     nameEl.textContent = input.files[0].name;
     nameEl.style.color = "var(--text)";
