@@ -55,6 +55,37 @@ sudo modprobe usbserial
     usbipd attach --wsl --busid <busid>
     ```
 
+4. To permanently fix the permissions issues when reconnecting, do the following:
+    - Open your Bash configuration file: ```nano ~/.bashrc```
+    - Add the following function to the bottom. Replace <WINDOWS_IP> and <BUSID> with your actual values (e.g., 192.168.1.50 and 1-1):
+    ```
+    # Function to attach ESP32 via USBIP and fix permissions
+    attach-esp32() {
+        echo "Attaching USB device..."
+        sudo usbip attach -r <WINDOWS_IP> -b <BUSID>
+        
+        echo "Fixing permissions..."
+        # Wait a moment for the device node to appear
+        sleep 1
+        
+        # Fix permissions for ttyUSB0 (or ttyACM0 depending on your board)
+        if [ -e /dev/ttyUSB0 ]; then
+            sudo chgrp dialout /dev/ttyUSB0
+            sudo chmod 660 /dev/ttyUSB0
+            echo "Success: /dev/ttyUSB0 permissions fixed."
+        elif [ -e /dev/ttyACM0 ]; then
+            sudo chgrp dialout /dev/ttyACM0
+            sudo chmod 660 /dev/ttyACM0
+            echo "Success: /dev/ttyACM0 permissions fixed."
+        else
+            echo "Warning: Device node not found. Check dmesg."
+        fi
+    }
+    ```
+    - Save and Exit: Press **Ctrl+O**, Enter to save. Press **Ctrl+X** to exit.
+    - Apply changes: ```source ~/.bashrc```
+    - Usage: Run in the terminal: ```attach-esp32```
+
 ## Flashing Firmware unto the Device
 
 Flash Firmware A
