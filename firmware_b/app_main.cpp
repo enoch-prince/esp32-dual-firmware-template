@@ -77,6 +77,15 @@ static void led_task(void * /*arg*/)
 /* ── Entry point ────────────────────────────────────────────────────────── */
 extern "C" void app_main(void)
 {
+    /* 0 ── Reset all board GPIOs that either firmware slot may have left
+     *       active.  esp_restart() (software reset) does NOT clear GPIO
+     *       output registers on ESP32, so the previous firmware's LED can
+     *       stay driven unless we reclaim the pin before use.
+     *       gpio_reset_pin() returns each pad to its reset state:
+     *       input, no pull, GPIO-matrix disconnected.               ────── */
+    gpio_reset_pin(GPIO_NUM_2);   // FW-A LED
+    gpio_reset_pin(GPIO_NUM_4);   // FW-B LED
+
     /* 1 ── NVS init ─────────────────────────────────────────────────────── */
     esp_err_t nvs_ret = nvs_flash_init();
     if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -188,4 +197,12 @@ extern "C" void app_main(void)
     }
 
     ESP_LOGI(TAG, "Firmware B startup complete – LED blinking on GPIO%d", FW_B_LED_GPIO);
+
+    esp_register_shutdown_handler([]() {
+        // Runs just before esp_restart(), from any call site
+        gpio_set_level(FW_B_LED_GPIO, 0);
+        gpio_reset_pin(FW_B_LED_GPIO);
+        // stop PWM, flush UART TX, etc.
+    });
+
 }
