@@ -337,23 +337,37 @@ def save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2))
 
 
-def write_manifest(variant: str, state: dict, server_url: str) -> None:
+def write_manifest(state: dict, server_url: str) -> None:
     """
-    Write manifest.json for a variant.
+    Write a combined manifest.json to every variant directory.
+
+    Both fw_a/manifest.json and fw_b/manifest.json receive the same content,
+    containing all uploaded variants.  This lets any firmware (regardless of
+    its hardcoded manifest URL) find the correct key for its target slot —
+    e.g. FW-B fetching fw_b/manifest.json can still find 'firmware_a' when
+    it receives a slot=A OTA command.
 
     Format matches parse_manifest() in ota_manager.cpp:
-      { "firmware_a": { "version":..., "url":..., "sha256":..., "signature":... } }
+      { "firmware_a": {...}, "firmware_b": {...} }
     """
-    fw_key = "firmware_a" if variant == "fw_a" else "firmware_b"
-    manifest = {
-        fw_key: {
-            "version":   state[variant]["version"],
-            "url":       f"{server_url}/{variant}/{state[variant].get('filename') or 'sample_project.bin'}",
-            "sha256":    state[variant]["sha256"],
-            "signature": state[variant]["signature"],
+    manifest = {}
+    for v in VARIANTS:
+        if not state[v].get("sha256"):
+            continue  # skip variants not yet uploaded
+        fw_key = "firmware_a" if v == "fw_a" else "firmware_b"
+        manifest[fw_key] = {
+            "version":   state[v]["version"],
+            "url":       f"{server_url}/{v}/{state[v].get('filename') or 'sample_project.bin'}",
+            "sha256":    state[v]["sha256"],
+            "signature": state[v]["signature"],
         }
-    }
-    manifest_path(variant).write_text(json.dumps(manifest, indent=2))
+
+    if not manifest:
+        return
+
+    payload = json.dumps(manifest, indent=2)
+    for v in VARIANTS:
+        manifest_path(v).write_text(payload)
 
 
 # ── HMAC helper (mirrors http_cmd.cpp verify_hmac logic) ──────────────────
@@ -452,7 +466,7 @@ def api_upload(variant: str):
         "binary_size": len(data),
     })
     save_state(_state)
-    write_manifest(variant, _state, _server_url)
+    write_manifest(_state, _server_url)
 
     return jsonify(
         variant=variant,
@@ -486,7 +500,7 @@ def api_set_version(variant: str):
 
     _state[variant]["version"] = version
     save_state(_state)
-    write_manifest(variant, _state, _server_url)
+    write_manifest(_state, _server_url)
 
     return jsonify(variant=variant, version=version)
 
@@ -942,9 +956,8 @@ def main() -> None:
     _server_url  = f"https://{ip}:{args.port}"
 
     # Regenerate manifests in case server URL changed (different IP)
-    for v in VARIANTS:
-        if binary_path(v).exists() and _state[v]["sha256"]:
-            write_manifest(v, _state, _server_url)
+    if any(binary_path(v).exists() and _state[v]["sha256"] for v in VARIANTS):
+        write_manifest(_state, _server_url)
 
     # Configure SSL
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
