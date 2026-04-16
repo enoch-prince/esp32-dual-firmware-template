@@ -133,7 +133,7 @@ extern "C" void app_main(void)
         const net_cmd::HttpConfig http_cfg{
             .port        = 8080,
             .hmac_secret = {reinterpret_cast<const char *>(hmac_secret_txt_start),
-                            static_cast<size_t>(hmac_secret_txt_end - hmac_secret_txt_start)},
+                            static_cast<size_t>(hmac_secret_txt_end - hmac_secret_txt_start - 1)},
             .ota_cfg     = ota_cfg,
         };
         if (net_cmd::http_start(http_cfg) != ESP_OK) {
