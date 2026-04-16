@@ -8,8 +8,9 @@ Features
 * Auto-computes SHA-256 and signs with ECDSA-P256 on every upload
   (raw r||s format required by PSA psa_verify_hash on the device)
 * Web dashboard to upload binaries, update versions, and trigger OTA on a device
-* --setup  flag generates all keys/certs and copies them into firmware_a/certs/
-  and firmware_b/certs/ so the firmware can be rebuilt with real credentials
+* --setup flag generates keys/certs and copies them into firmware_a/certs/ and
+  firmware_b/certs/. Re-running --setup regenerates only the TLS cert (the ECDSA
+  signing key is preserved unless --force-new-key is also passed).
 
 Requirements
 ------------
@@ -17,13 +18,27 @@ Requirements
 
 Usage
 -----
-    # First-time: generate keys + certs, copy into firmware certs dirs
+    # First-time setup (from WSL2 or Linux — auto-detects LAN IP for TLS cert SAN)
     python3 scripts/ota_server.py --setup
 
-    # Start server (default: https://0.0.0.0:8443)
-    python3 scripts/ota_server.py
+    # First-time setup from Windows — pass the server's LAN IP explicitly
+    python  scripts/ota_server.py --setup --host 192.168.1.x
 
-    # Custom host/port
+    # Setup from Windows when firmware dirs are on WSL2 (copies certs automatically)
+    python  scripts/ota_server.py --setup --host 192.168.1.x ^
+        --project-root "\\\\wsl.localhost\\Ubuntu\\home\\epk\\sample_project"
+
+    # Re-run setup after moving to a new IP (preserves signing key, new TLS cert only)
+    python3 scripts/ota_server.py --setup --host <new-ip>
+
+    # Replace the signing key as well (previously signed binaries must be re-uploaded)
+    python3 scripts/ota_server.py --setup --force-new-key
+
+    # Start server (binds to all interfaces; LAN IP shown in startup output)
+    python3 scripts/ota_server.py               # WSL2 / Linux
+    python  scripts/ota_server.py               # Windows
+
+    # Start on a specific interface or port
     python3 scripts/ota_server.py --host 0.0.0.0 --port 8443
 
 Manifest format served at  GET /<variant>/manifest.json
@@ -71,21 +86,26 @@ except ImportError:
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
 DATA_DIR     = SCRIPT_DIR / "ota_data"
 
 SIGNING_KEY_PATH  = DATA_DIR / "signing_key.pem"
 ECDSA_PUB_PATH    = DATA_DIR / "ecdsa_pub.pem"
 SERVER_CERT_PATH  = DATA_DIR / "server_cert.pem"
 SERVER_KEY_PATH   = DATA_DIR / "server_key.pem"
+HMAC_SECRET_PATH  = DATA_DIR / "hmac_secret.txt"
 STATE_PATH        = DATA_DIR / "state.json"
 
 VARIANTS = ["fw_a", "fw_b"]
 
-FIRMWARE_CERT_DIRS = {
-    "fw_a": PROJECT_ROOT / "firmware_a" / "certs",
-    "fw_b": PROJECT_ROOT / "firmware_b" / "certs",
-}
+def _firmware_cert_dirs(project_root: Path) -> dict:
+    return {
+        "fw_a": project_root / "firmware_a" / "certs",
+        "fw_b": project_root / "firmware_b" / "certs",
+    }
+
+# Default: project root is one level above the scripts/ directory.
+# Override at runtime with --project-root when running from a different machine.
+FIRMWARE_CERT_DIRS = _firmware_cert_dirs(SCRIPT_DIR.parent)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -97,7 +117,8 @@ def firmware_dir(variant: str) -> Path:
 
 
 def binary_path(variant: str) -> Path:
-    return firmware_dir(variant) / "sample_project.bin"
+    filename = _state.get(variant, {}).get("filename") or ""
+    return firmware_dir(variant) / (filename or "sample_project.bin")
 
 
 def manifest_path(variant: str) -> Path:
@@ -187,43 +208,74 @@ def run_setup(host_ip: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("\n=== OTA Server Setup ===\n")
 
-    generate_ecdsa_signing_keypair()
+    if SIGNING_KEY_PATH.exists():
+        print("  ECDSA signing key already exists — keeping it (re-run with --force-new-key to replace).")
+    else:
+        generate_ecdsa_signing_keypair()
+
     generate_tls_cert(host_ip)
 
+    # Generate (or reuse) the shared HMAC secret in DATA_DIR — single source of truth.
+    if HMAC_SECRET_PATH.exists():
+        hmac_secret = HMAC_SECRET_PATH.read_text().strip()
+        print("  HMAC secret already exists — reusing it.")
+    else:
+        hmac_secret = base64.urlsafe_b64encode(os.urandom(32)).decode()
+        HMAC_SECRET_PATH.write_text(hmac_secret)
+        print(f"  Generated HMAC secret → {HMAC_SECRET_PATH}")
+
     print("\n  Copying public credentials into firmware cert directories …")
+    copy_ok = True
     for variant, cert_dir in FIRMWARE_CERT_DIRS.items():
-        cert_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ECDSA_PUB_PATH,   cert_dir / "ecdsa_pub.pem")
-        shutil.copy(SERVER_CERT_PATH,  cert_dir / "server_ca.pem")
-        # Generate placeholder MQTT + client certs (unchanged — device needs real ones for MQTT)
-        for fname in ["mqtt_ca.pem", "client_cert.pem"]:
-            dst = cert_dir / fname
-            if not dst.exists():
-                shutil.copy(SERVER_CERT_PATH, dst)
-        for fname in ["client_key.pem"]:
-            dst = cert_dir / fname
+        try:
+            cert_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ECDSA_PUB_PATH,  cert_dir / "ecdsa_pub.pem")
+            shutil.copy(SERVER_CERT_PATH, cert_dir / "server_ca.pem")
+            # Placeholder MQTT + client certs — only written if absent
+            for fname in ["mqtt_ca.pem", "client_cert.pem"]:
+                dst = cert_dir / fname
+                if not dst.exists():
+                    shutil.copy(SERVER_CERT_PATH, dst)
+            dst = cert_dir / "client_key.pem"
             if not dst.exists():
                 shutil.copy(SERVER_KEY_PATH, dst)
-        if not (cert_dir / "hmac_secret.txt").exists():
-            secret = base64.urlsafe_b64encode(os.urandom(32)).decode()
-            (cert_dir / "hmac_secret.txt").write_text(secret)
-        print(f"    → {cert_dir}")
+            # Always write the HMAC secret so firmware certs stay in sync with DATA_DIR
+            (cert_dir / "hmac_secret.txt").write_text(hmac_secret)
+            print(f"    ✓ {cert_dir}")
+        except OSError as e:
+            print(f"    ✗ {cert_dir}  ({e})")
+            copy_ok = False
+
+    if not copy_ok:
+        print(f"""
+  Could not write to one or more firmware cert directories.
+  If you are running this script from Windows, pass --project-root to point at
+  the project on the WSL2 filesystem, e.g.:
+
+    python scripts\\ota_server.py --setup --host <your-lan-ip> ^
+        --project-root "\\\\wsl$\\Ubuntu\\home\\epk\\sample_project"
+
+  Or copy the generated files manually from WSL2:
+
+    cp {ECDSA_PUB_PATH}   firmware_a/certs/ecdsa_pub.pem
+    cp {ECDSA_PUB_PATH}   firmware_b/certs/ecdsa_pub.pem
+    cp {SERVER_CERT_PATH}  firmware_a/certs/server_ca.pem
+    cp {SERVER_CERT_PATH}  firmware_b/certs/server_ca.pem
+""")
 
     print("""
 === Next steps ===
 
 1. Rebuild both firmware variants so the new certs are embedded:
      source "$HOME/.espressif/tools/activate_idf_v6.0.sh"
-     python "$IDF_PATH/tools/idf.py" -DFIRMWARE_VARIANT=firmware_a \\
-       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fw_a" -B build_fw_a build
-     python "$IDF_PATH/tools/idf.py" -DFIRMWARE_VARIANT=firmware_b \\
-       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fw_b" -B build_fw_b build
+     ./build_and_flash.sh --build-only
 
-2. Flash the initial firmware to the device (ota_0 slot):
-     python "$IDF_PATH/tools/idf.py" -B build_fw_a flash
+2. Flash:
+     ./build_and_flash.sh --flash-fw-a   # or --flash-fw-b / no args for both
 
 3. Start the OTA server:
-     python3 scripts/ota_server.py
+     python3 scripts/ota_server.py          # from WSL2
+     python  scripts\\ota_server.py         # from Windows
 
 4. Upload build artifacts to the server dashboard and trigger OTA.
 """)
@@ -263,6 +315,7 @@ def sha256_hex(data: bytes) -> str:
 def _empty_variant_state() -> dict:
     return {
         "version":     "0.1.0",
+        "filename":    "",
         "sha256":      "",
         "signature":   "",
         "uploaded_at": "",
@@ -295,7 +348,7 @@ def write_manifest(variant: str, state: dict, server_url: str) -> None:
     manifest = {
         fw_key: {
             "version":   state[variant]["version"],
-            "url":       f"{server_url}/{variant}/sample_project.bin",
+            "url":       f"{server_url}/{variant}/{state[variant].get('filename') or 'sample_project.bin'}",
             "sha256":    state[variant]["sha256"],
             "signature": state[variant]["signature"],
         }
@@ -337,11 +390,13 @@ def serve_manifest(variant: str):
     return send_file(p, mimetype="application/json")
 
 
-@app.route("/<variant>/sample_project.bin")
-def serve_binary(variant: str):
+@app.route("/<variant>/<filename>")
+def serve_binary(variant: str, filename: str):
     if variant not in VARIANTS:
         return jsonify(error="unknown variant"), 404
-    p = binary_path(variant)
+    if not filename.endswith(".bin"):
+        return jsonify(error="not found"), 404
+    p = firmware_dir(variant) / filename
     if not p.exists():
         return jsonify(error="binary not uploaded"), 404
     return send_file(p, mimetype="application/octet-stream")
@@ -377,12 +432,20 @@ def api_upload(variant: str):
     digest  = sha256_hex(data)
     sig_b64 = sign_binary(data, _signing_key)
 
-    # Persist binary
-    binary_path(variant).write_bytes(data)
+    # Remove previous versioned binary if the filename will change
+    new_filename = f"sample_project-v{version}.bin"
+    old_filename = _state[variant].get("filename") or ""
+    if old_filename and old_filename != new_filename:
+        old_path = firmware_dir(variant) / old_filename
+        old_path.unlink(missing_ok=True)
+
+    # Persist binary under versioned filename
+    (firmware_dir(variant) / new_filename).write_bytes(data)
 
     # Update state
     _state[variant].update({
         "version":     version,
+        "filename":    new_filename,
         "sha256":      digest,
         "signature":   sig_b64,
         "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -463,13 +526,22 @@ def api_trigger():
     if not device_ip:
         return jsonify(error="device_ip required"), 400
 
-    # Load HMAC secret from firmware certs if not provided
+    # Load HMAC secret — prefer DATA_DIR copy (works from any machine),
+    # fall back to firmware cert dirs for backwards compatibility.
     if not secret:
-        secret_file = FIRMWARE_CERT_DIRS["fw_a"] / "hmac_secret.txt"
-        if secret_file.exists():
-            secret = secret_file.read_text().strip()
+        if HMAC_SECRET_PATH.exists():
+            secret = HMAC_SECRET_PATH.read_text().strip()
         else:
-            return jsonify(error="hmac_secret not provided and not found in firmware_a/certs/"), 400
+            secret_file = FIRMWARE_CERT_DIRS["fw_a"] / "hmac_secret.txt"
+            if secret_file.exists():
+                secret = secret_file.read_text().strip()
+            else:
+                return jsonify(
+                    error=(
+                        "hmac_secret not found. Run --setup to generate one, "
+                        "or pass hmac_secret in the request body."
+                    )
+                ), 400
 
     if command == "ota":
         # /cmd/update?slot=A  (fw_a → A, fw_b → B)
@@ -520,7 +592,7 @@ def api_status():
                 "binary_present":   binary_path(v).exists(),
                 "manifest_present": manifest_path(v).exists(),
                 "manifest_url":     f"{_server_url}/{v}/manifest.json",
-                "binary_url":       f"{_server_url}/{v}/sample_project.bin",
+                "binary_url":       f"{_server_url}/{v}/{_state[v].get('filename') or 'sample_project.bin'}",
             }
             for v in VARIANTS
         }
@@ -629,7 +701,9 @@ function renderCard(variant, info) {
         <div class="file-zone-name" id="file-name-${variant}">No file selected</div>
       </div>
       <label>Version</label>
-      <input type="text" name="version" value="${info.version || '0.1.0'}" required>
+      <input type="text" id="ver-upload-${variant}" name="version"
+             value="${info.version || '0.1.0'}" required
+             oninput="updateFileZoneDisplay('${variant}')">
       <button type="submit" class="btn btn-primary">Upload &amp; Sign</button>
     </form>
     <div id="upload-msg-${variant}" class="msg"></div>
@@ -678,6 +752,7 @@ async function doUpload(evt, variant) {
   try {
     const r = await fetch(`${SERVER}/api/upload/${variant}`, { method:"POST", body:fd });
     const j = await r.json();
+    console.log("doUpload:", j);
     if (r.ok) {
       showMsg(msg, "ok", `✓ Uploaded v${j.version}  SHA-256: ${j.sha256.slice(0,16)}…`);
       setTimeout(refresh, 600);
@@ -715,6 +790,7 @@ async function doTrigger(variant, command) {
       body:JSON.stringify({ device_ip:ip, device_port:port, command, variant })
     });
     const j = await r.json();
+    console.log("doTriggerOTA:", j);
     if (r.ok) showMsg(msg, "ok", `✓ ${command} sent → /cmd/update (HTTP ${j.status})`);
     else      showMsg(msg, "err", j.error || JSON.stringify(j));
   } catch(e) { showMsg(msg, "err", e.message); }
@@ -734,16 +810,24 @@ async function doSwitch(variant) {
       body:JSON.stringify({ device_ip:ip, device_port:port, command:"switch", slot, variant })
     });
     const j = await r.json();
+    console.log("doSwitchFirmware:", j);
     if (r.ok) showMsg(msg, "ok", `✓ Switch→${slot} sent → /cmd/switch (HTTP ${j.status})`);
     else      showMsg(msg, "err", j.error || JSON.stringify(j));
   } catch(e) { showMsg(msg, "err", e.message); }
 }
 
 function fileChanged(input, variant) {
-  const nameEl = document.getElementById("file-name-" + variant);
-  console.log(variant, "clicked | ", "Input: ", input);
-  if (input.files && input.files.length) {
-    nameEl.textContent = input.files[0].name;
+  updateFileZoneDisplay(variant);
+}
+
+function updateFileZoneDisplay(variant) {
+  const fileInput = document.getElementById("file-" + variant);
+  const verInput  = document.getElementById("ver-upload-" + variant);
+  const nameEl    = document.getElementById("file-name-" + variant);
+  if (fileInput && fileInput.files && fileInput.files.length) {
+    const fname   = fileInput.files[0].name;
+    const version = verInput ? verInput.value.trim() : "";
+    nameEl.textContent = version ? `${fname}  [v${version}]` : fname;
     nameEl.style.color = "var(--text)";
   } else {
     nameEl.textContent = "No file selected";
@@ -814,15 +898,33 @@ def main() -> None:
     global _signing_key, _server_url, _state
 
     parser = argparse.ArgumentParser(description="ESP32 local HTTPS OTA server")
-    parser.add_argument("--host",  default="0.0.0.0",  help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--host",  default="0.0.0.0",
+                        help="Bind address for the server (default: 0.0.0.0). "
+                             "In --setup mode, also used as the IP SAN in the TLS cert "
+                             "if not 0.0.0.0 — otherwise the LAN IP is auto-detected.")
     parser.add_argument("--port",  default=8443, type=int, help="HTTPS port (default: 8443)")
     parser.add_argument("--setup", action="store_true",
                         help="Generate keys/certs and copy into firmware cert dirs, then exit")
+    parser.add_argument("--force-new-key", action="store_true",
+                        help="With --setup: replace the ECDSA signing key even if one exists "
+                             "(all previously signed binaries must be re-uploaded afterward)")
+    parser.add_argument("--project-root", default=None,
+                        help="Path to the project root containing firmware_a/ and firmware_b/. "
+                             "Useful when running from Windows to point at the WSL2 filesystem, e.g.: "
+                             r'"\\wsl$\Ubuntu\home\epk\sample_project"')
     args = parser.parse_args()
 
-    ip = local_ip()
+    # Update firmware cert dirs if an explicit project root was given
+    if args.project_root:
+        global FIRMWARE_CERT_DIRS
+        FIRMWARE_CERT_DIRS = _firmware_cert_dirs(Path(args.project_root))
+
+    ip = local_ip() if args.host == "0.0.0.0" else args.host
 
     if args.setup:
+        if args.force_new_key and SIGNING_KEY_PATH.exists():
+            SIGNING_KEY_PATH.unlink()
+            ECDSA_PUB_PATH.unlink()
         run_setup(ip)
         return
 

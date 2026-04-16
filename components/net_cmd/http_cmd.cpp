@@ -246,6 +246,7 @@
  * Protected by HMAC-SHA256 request signing with zero-heap JSON generation (manual string building)
 */
 #include "net_cmd.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <array>
@@ -253,14 +254,38 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "boot_ctrl.hpp"
 #include "ota_manager.hpp"
 
 static const char *TAG = "http_cmd";
 
 namespace {
-net_cmd::HttpConfig g_cfg;
-httpd_handle_t g_server{nullptr};
+net_cmd::HttpConfig         g_cfg;
+httpd_handle_t              g_server{nullptr};
+std::atomic<bool>           g_ota_in_progress{false};
+
+/* ── OTA background task ───────────────────────────────────────────────── */
+struct OtaTaskArg {
+    ota_manager::Config cfg;
+    boot_ctrl::Slot     target;
+};
+
+/* Static storage — safe because g_ota_in_progress prevents concurrent OTA.
+ * Written by handle_update before xTaskCreate; read only by ota_task. */
+static OtaTaskArg s_ota_arg;
+
+static void ota_task(void * /*arg*/)
+{
+    auto result = ota_manager::check_and_update(s_ota_arg.cfg, s_ota_arg.target);
+    if (!result && result.error() != ota_manager::Error::VersionCurrent) {
+        ESP_LOGE(TAG, "OTA update failed (err=%u)",
+                 static_cast<unsigned>(result.error()));
+    }
+    g_ota_in_progress.store(false);
+    vTaskDelete(nullptr);
+}
 
 /* ── JSON Response Buffer (fixed size, no malloc) ──────────────────────── */
 constexpr size_t kJsonBufSize = 512;
@@ -438,26 +463,29 @@ esp_err_t handle_switch(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad HMAC");
         return ESP_FAIL;
     }
-    
+
     char query[32]{};
     httpd_req_get_url_query_str(req, query, sizeof(query));
-    
+
     char fw_param[4]{};
     httpd_query_key_value(query, "fw", fw_param, sizeof(fw_param));
-    
+
     const auto target = (fw_param[0] == 'B' || fw_param[0] == 'b')
                         ? boot_ctrl::Slot::FirmwareB
                         : boot_ctrl::Slot::FirmwareA;
-    
-    // httpd_resp_sendstr(req, "Switching firmware...");
-    
+
+    /* Send response BEFORE switch_to() calls esp_restart() — the reboot
+     * happens after kRebootDelayMs, giving lwIP time to flush the TCP ACK. */
+    httpd_resp_sendstr(req, "Switching firmware – rebooting now");
+
     auto result = boot_ctrl::switch_to(target);
     if (!result) {
-        httpd_resp_sendstr(req, "Switching firmware failed");
-        ESP_LOGE(TAG, "Switch failed");
+        /* switch_to() only returns on failure (already running that slot, or
+         * partition not found).  We can't send a second response here because
+         * the response was already sent above, so just log it. */
+        ESP_LOGE(TAG, "switch_to failed (err=%u)",
+                 static_cast<unsigned>(result.error()));
     }
-
-    httpd_resp_sendstr(req, "Switching firmware Successful");
     return ESP_OK;
 }
 
@@ -468,25 +496,39 @@ esp_err_t handle_update(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad HMAC");
         return ESP_FAIL;
     }
-    
+
+    if (g_ota_in_progress.exchange(true)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "OTA already in progress");
+        return ESP_FAIL;
+    }
+
     char query[32]{};
     httpd_req_get_url_query_str(req, query, sizeof(query));
-    
+
     char slot_param[4]{};
     httpd_query_key_value(query, "slot", slot_param, sizeof(slot_param));
-    
+
     const auto target = (slot_param[0] == 'B' || slot_param[0] == 'b')
                         ? boot_ctrl::Slot::FirmwareB
                         : boot_ctrl::Slot::FirmwareA;
-    
-    httpd_resp_sendstr(req, "OTA update triggered...");
-    
-    auto result = ota_manager::check_and_update(g_cfg.ota_cfg, target);
-    if (!result && result.error() != ota_manager::Error::VersionCurrent) {
-        httpd_resp_sendstr(req, "OTA update failed");
-        ESP_LOGE(TAG, "OTA update failed");
+
+    s_ota_arg.cfg    = g_cfg.ota_cfg;
+    s_ota_arg.target = target;
+
+    /* Spawn background task then return immediately so the httpd task is free
+     * to serve other requests.  ota_task() clears g_ota_in_progress when done
+     * and calls vTaskDelete(nullptr) to clean itself up. */
+    if (xTaskCreate(ota_task, "ota_bg", 16384, nullptr,
+                    tskIDLE_PRIORITY + 3, nullptr) != pdPASS)
+    {
+        g_ota_in_progress.store(false);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Failed to start OTA task");
+        return ESP_FAIL;
     }
-    httpd_resp_sendstr(req, "OTA update success");
+
+    httpd_resp_sendstr(req, "OTA triggered – running in background");
     return ESP_OK;
 }
 

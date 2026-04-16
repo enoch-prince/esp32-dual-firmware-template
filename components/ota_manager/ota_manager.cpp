@@ -675,22 +675,22 @@ parse_manifest(const char *json_str, size_t json_len, boot_ctrl::Slot target) no
     // Parse each field — base pointer is always json_str (absolute offsets)
     const char *val = find_json_value(json_str, fw_tokens, fw_ntok,
                                       "version", len);
-    if (val && len < info.version.capacity()) {
+    if (val && len <= info.version.capacity()) {
         info.version.append(val, len);
     }
 
     val = find_json_value(json_str, fw_tokens, fw_ntok, "url", len);
-    if (val && len < info.url.capacity()) {
+    if (val && len <= info.url.capacity()) {
         info.url.append(val, len);
     }
 
     val = find_json_value(json_str, fw_tokens, fw_ntok, "sha256", len);
-    if (val && len < info.sha256_hex.capacity()) {
+    if (val && len <= info.sha256_hex.capacity()) {
         info.sha256_hex.append(val, len);
     }
 
     val = find_json_value(json_str, fw_tokens, fw_ntok, "signature", len);
-    if (val && len < info.sig_b64.capacity()) {
+    if (val && len <= info.sig_b64.capacity()) {
         info.sig_b64.append(val, len);
     }
     
