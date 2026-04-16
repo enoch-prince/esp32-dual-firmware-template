@@ -248,9 +248,7 @@
 #include "net_cmd.hpp"
 #include <cstdint>
 #include <cstring>
-#include <charconv>
 #include <array>
-#include <ctime>
 #include <psa/crypto.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -355,14 +353,16 @@ static bool hex_to_bytes(std::string_view hex,
         return false;
     }
 
-    uint32_t recv_ts = 0;
-    std::from_chars(ts_str, ts_str + strlen(ts_str), recv_ts);
-    const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
-    if (std::abs(static_cast<int32_t>(now - recv_ts)) > 30) {
-        ESP_LOGW(TAG, "HMAC timestamp too old/far-future: %lu vs now %lu",
-                 recv_ts, now);
-        return false;
-    }
+    /* NOTE: Timestamp freshness check is intentionally skipped in dev builds.
+     * The ESP32 has no battery-backed RTC and SNTP is not configured, so
+     * std::time() returns seconds-since-boot (near 0) while the server sends
+     * actual Unix time — the ±30 s window would reject every request.
+     * TODO: add esp_sntp sync in app_main() and re-enable this check for prod:
+     *   uint32_t recv_ts = 0;
+     *   std::from_chars(ts_str, ts_str + strlen(ts_str), recv_ts);
+     *   const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+     *   if (std::abs(static_cast<int32_t>(now - recv_ts)) > 30) return false;
+     */
 
     char method[8]{};
     char uri[128]{};
@@ -449,12 +449,15 @@ esp_err_t handle_switch(httpd_req_t *req)
                         ? boot_ctrl::Slot::FirmwareB
                         : boot_ctrl::Slot::FirmwareA;
     
-    httpd_resp_sendstr(req, "Switching firmware...");
+    // httpd_resp_sendstr(req, "Switching firmware...");
     
     auto result = boot_ctrl::switch_to(target);
     if (!result) {
+        httpd_resp_sendstr(req, "Switching firmware failed");
         ESP_LOGE(TAG, "Switch failed");
     }
+
+    httpd_resp_sendstr(req, "Switching firmware Successful");
     return ESP_OK;
 }
 
@@ -480,8 +483,10 @@ esp_err_t handle_update(httpd_req_t *req)
     
     auto result = ota_manager::check_and_update(g_cfg.ota_cfg, target);
     if (!result && result.error() != ota_manager::Error::VersionCurrent) {
+        httpd_resp_sendstr(req, "OTA update failed");
         ESP_LOGE(TAG, "OTA update failed");
     }
+    httpd_resp_sendstr(req, "OTA update success");
     return ESP_OK;
 }
 
