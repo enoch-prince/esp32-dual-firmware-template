@@ -10,6 +10,7 @@ idf_component_register(
         boot_ctrl
         ota_manager
         esp_http_server
+        nvs_flash
         etl
         jsmn
         mbedtls          # PSA crypto headers for HMAC verification

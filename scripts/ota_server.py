@@ -594,6 +594,61 @@ def api_trigger():
         return jsonify(error=str(e)), 502
 
 
+# ── Set OTA URL on device ──────────────────────────────────────────────────
+
+@app.route("/api/set-ota-url", methods=["POST"])
+def api_set_ota_url():
+    """
+    Push a new OTA manifest URL to a running device's /ota/url endpoint.
+
+    Body (JSON):
+      device_ip:    IP of the device
+      device_port:  HTTP cmd server port (default: 8080)
+      manifest_url: full HTTPS manifest URL to store on the device
+      hmac_secret:  (optional) shared secret; loaded from firmware_a/certs/ if omitted
+    """
+    import urllib.request
+
+    data         = request.get_json(silent=True) or request.form
+    device_ip    = (data.get("device_ip")    or "").strip()
+    device_port  = int(data.get("device_port") or 8080)
+    manifest_url = (data.get("manifest_url") or "").strip()
+    secret       = (data.get("hmac_secret")  or "").strip()
+
+    if not device_ip:
+        return jsonify(error="device_ip required"), 400
+    if not manifest_url:
+        return jsonify(error="manifest_url required"), 400
+
+    if not secret:
+        secret_file = FIRMWARE_CERT_DIRS["fw_a"] / "hmac_secret.txt"
+        if secret_file.exists():
+            secret = secret_file.read_text().strip()
+        else:
+            return jsonify(error="hmac_secret not provided and not found in firmware_a/certs/"), 400
+
+    method, path = "POST", "/ota/url"
+    token, ts = make_hmac_token(method, path, secret)
+    url = f"http://{device_ip}:{device_port}{path}"
+
+    req = urllib.request.Request(
+        url,
+        data=manifest_url.encode(),
+        method=method,
+        headers={
+            "Authorization": token,
+            "X-Timestamp":   ts,
+            "Content-Type":  "text/plain",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body_resp = resp.read().decode(errors="replace")
+        return jsonify(status=resp.status, manifest_url=body_resp)
+    except Exception as e:
+        return jsonify(error=str(e)), 502
+
+
 # ── Status API ─────────────────────────────────────────────────────────────
 
 @app.route("/api/status")
@@ -749,6 +804,16 @@ function renderCard(variant, info) {
     </div>
     <div id="trig-msg-${variant}" class="msg"></div>
   </div>
+
+  <!-- Set OTA URL on device -->
+  <div class="section trigger-form">
+    <h3>Set OTA manifest URL on device</h3>
+    <label>Manifest URL</label>
+    <input type="text" id="ota-url-${variant}" value="${info.manifest_url}"
+           placeholder="https://192.168.x.y:8443/${variant}/manifest.json">
+    <button class="btn btn-secondary" onclick="doSetOtaUrl('${variant}')">Push URL to device</button>
+    <div id="ota-url-msg-${variant}" class="msg"></div>
+  </div>
 </div>`;
 }
 
@@ -806,6 +871,25 @@ async function doTrigger(variant, command) {
     const j = await r.json();
     console.log("doTriggerOTA:", j);
     if (r.ok) showMsg(msg, "ok", `✓ ${command} sent → /cmd/update (HTTP ${j.status})`);
+    else      showMsg(msg, "err", j.error || JSON.stringify(j));
+  } catch(e) { showMsg(msg, "err", e.message); }
+}
+
+async function doSetOtaUrl(variant) {
+  const msg  = document.getElementById("ota-url-msg-" + variant);
+  const ip   = document.getElementById("ip-"      + variant).value.trim();
+  const port = document.getElementById("port-"    + variant).value.trim();
+  const url  = document.getElementById("ota-url-" + variant).value.trim();
+  if (!ip)  { showMsg(msg, "err", "Enter device IP first"); return; }
+  if (!url) { showMsg(msg, "err", "Enter a manifest URL"); return; }
+  try {
+    const r = await fetch(`${SERVER}/api/set-ota-url`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ device_ip:ip, device_port:port, manifest_url:url })
+    });
+    const j = await r.json();
+    if (r.ok) showMsg(msg, "ok", `✓ URL set on device: ${j.manifest_url}`);
     else      showMsg(msg, "err", j.error || JSON.stringify(j));
   } catch(e) { showMsg(msg, "err", e.message); }
 }
@@ -872,6 +956,10 @@ function updateCardStatus(variant, info) {
   cells[3].textContent = fmtSize(info.binary_size);
   cells[4].textContent = info.uploaded_at || "—";
   cells[5].innerHTML = `<a href="${info.manifest_url}" target="_blank" style="color:#e94560">${info.manifest_url}</a>`;
+
+  // Pre-fill OTA URL input only when empty (don't clobber what the user is typing)
+  const urlInput = card.querySelector(`#ota-url-${variant}`);
+  if (urlInput && !urlInput.value) urlInput.value = info.manifest_url;
 
   return true;
 }

@@ -36,7 +36,8 @@ static const char *TAG = "fw_a";
 
 /* ── OTA / command server endpoints  (replace before testing OTA) ────────── */
 // #define OTA_MANIFEST_URL  "https://172.19.189.190:8443/fw_a/manifest.json"  // WSL2
-#define OTA_MANIFEST_URL  "https://192.168.0.105:8443/fw_a/manifest.json"  // Windows
+// #define OTA_MANIFEST_URL  "https://192.168.0.105:8443/fw_a/manifest.json"  // Windows
+#define OTA_MANIFEST_URL  "https://192.168.0.104:8443/fw_a/manifest.json"  // Windows
 // #define MQTT_BROKER_URI   "mqtts://mqtt.your-domain.com:8883"
 // #define DEVICE_ID         "esp32-dev-001"
 

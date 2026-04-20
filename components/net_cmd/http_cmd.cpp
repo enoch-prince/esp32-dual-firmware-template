@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "boot_ctrl.hpp"
 #include "ota_manager.hpp"
+#include "nvs.h"
 
 static const char *TAG = "http_cmd";
 
@@ -23,6 +24,38 @@ namespace {
 net_cmd::HttpConfig         g_cfg;
 httpd_handle_t              g_server{nullptr};
 std::atomic<bool>           g_ota_in_progress{false};
+
+/* ── Runtime-configurable OTA manifest URL ───────────────────────────────── */
+
+static char g_manifest_url_buf[256]{};
+
+static const char *ota_nvs_namespace()
+{
+    return (boot_ctrl::running_slot() == boot_ctrl::Slot::FirmwareA)
+           ? "ota_fw_a" : "ota_fw_b";
+}
+
+static void load_manifest_url_nvs()
+{
+    nvs_handle_t h;
+    if (nvs_open(ota_nvs_namespace(), NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = sizeof(g_manifest_url_buf);
+    if (nvs_get_str(h, "manifest_url", g_manifest_url_buf, &len) == ESP_OK
+            && g_manifest_url_buf[0] != '\0') {
+        g_cfg.ota_cfg.manifest_url = {g_manifest_url_buf, std::strlen(g_manifest_url_buf)};
+        ESP_LOGI(TAG, "OTA URL loaded from NVS: %s", g_manifest_url_buf);
+    }
+    nvs_close(h);
+}
+
+static void save_manifest_url_nvs(const char *url)
+{
+    nvs_handle_t h;
+    if (nvs_open(ota_nvs_namespace(), NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "manifest_url", url);
+    nvs_commit(h);
+    nvs_close(h);
+}
 
 /* ── OTA background task ───────────────────────────────────────────────── */
 struct OtaTaskArg {
@@ -191,6 +224,52 @@ static bool hex_to_bytes(std::string_view hex,
     return status == PSA_SUCCESS;
 }
 
+/* ── GET /ota/url ────────────────────────────────────────────────────────── */
+esp_err_t handle_get_ota_url(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req,
+                    g_cfg.ota_cfg.manifest_url.data(),
+                    static_cast<ssize_t>(g_cfg.ota_cfg.manifest_url.size()));
+    return ESP_OK;
+}
+
+/* ── POST /ota/url ───────────────────────────────────────────────────────── */
+esp_err_t handle_set_ota_url(httpd_req_t *req)
+{
+    if (!verify_hmac(req, g_cfg.hmac_secret)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad HMAC");
+        return ESP_FAIL;
+    }
+
+    char body[sizeof(g_manifest_url_buf)]{};
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    // Trim trailing whitespace
+    while (len > 0 && (body[len - 1] == '\n' || body[len - 1] == '\r' || body[len - 1] == ' '))
+        body[--len] = '\0';
+
+    if (len == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty URL");
+        return ESP_FAIL;
+    }
+
+    std::strncpy(g_manifest_url_buf, body, sizeof(g_manifest_url_buf) - 1);
+    g_manifest_url_buf[sizeof(g_manifest_url_buf) - 1] = '\0';
+    g_cfg.ota_cfg.manifest_url = {g_manifest_url_buf, std::strlen(g_manifest_url_buf)};
+    save_manifest_url_nvs(g_manifest_url_buf);
+
+    ESP_LOGI(TAG, "OTA manifest URL updated: %s", g_manifest_url_buf);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, g_manifest_url_buf);
+    return ESP_OK;
+}
+
 /* ── GET /status (manual JSON, no cJSON) ───────────────────────────────── */
 esp_err_t handle_status(httpd_req_t *req)
 {
@@ -298,15 +377,18 @@ namespace net_cmd {
 esp_err_t http_start(const HttpConfig &cfg)
 {
     g_cfg = cfg;
+    load_manifest_url_nvs();  // override manifest_url from NVS if previously set
+
     httpd_config_t server_cfg = HTTPD_DEFAULT_CONFIG();
     server_cfg.server_port = cfg.port;
     server_cfg.lru_purge_enable = true;
-    
+    server_cfg.max_uri_handlers = 8;
+
     if (httpd_start(&g_server, &server_cfg) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
         return ESP_FAIL;
     }
-    
+
     static const httpd_uri_t status_uri = {
         .uri = "/status",
         .method = HTTP_GET,
@@ -325,10 +407,24 @@ esp_err_t http_start(const HttpConfig &cfg)
         .handler = handle_update,
         .user_ctx = nullptr,
     };
-    
+    static const httpd_uri_t get_ota_url_uri = {
+        .uri = "/ota/url",
+        .method = HTTP_GET,
+        .handler = handle_get_ota_url,
+        .user_ctx = nullptr,
+    };
+    static const httpd_uri_t set_ota_url_uri = {
+        .uri = "/ota/url",
+        .method = HTTP_POST,
+        .handler = handle_set_ota_url,
+        .user_ctx = nullptr,
+    };
+
     httpd_register_uri_handler(g_server, &status_uri);
     httpd_register_uri_handler(g_server, &switch_uri);
     httpd_register_uri_handler(g_server, &update_uri);
+    httpd_register_uri_handler(g_server, &get_ota_url_uri);
+    httpd_register_uri_handler(g_server, &set_ota_url_uri);
     
     ESP_LOGI(TAG, "HTTP command server started on port %u", cfg.port);
     return ESP_OK;
