@@ -4,15 +4,10 @@
  * Boot sequence:
  *   1. NVS init  →  record_boot_attempt
  *   2. LED blink task (GPIO2, 500 ms)
- *   3. Wi-Fi connect
- *   4. HTTP command server  +  MQTT command subscriber
- *   5. Health monitor (Wi-Fi probe, 10 s interval)
+ *   3. Wi-Fi connect (NVS creds → fallback → AP provisioning portal)
+ *   4. HTTP command server  +  MQTT command subscriber  (skipped if offline)
+ *   5. Health monitor (Wi-Fi probe registered only when connected)
  *   6. mark_healthy
- * 
- *  TODO:
- *  - Add WiFi Manager to configure Wi-Fi credentials via captive portal if connection fails
- *  - Fix app crashing if Wi-Fi connection fails (currently happens because HTTP server startup doesn't handle Wi-Fi failure gracefully)
- *  
  */
 
 #include <cstring>
@@ -25,7 +20,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
-#include "wifi.hpp"
+#include "wifi_manager.hpp"
 #include "boot_ctrl.hpp"
 #include "health_monitor.hpp"
 #include "net_cmd.hpp"
@@ -123,14 +118,14 @@ extern "C" void app_main(void)
     xTaskCreate(led_task, "led_a", 2048, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 
     /* 3 ── Wi-Fi ─────────────────────────────────────────────────────────── */
-    const wifi::Config wifi_cfg{
-        .ssid                = WIFI_SSID,
-        .password            = WIFI_PASSWORD,
+    const wifi_manager::Config wifi_cfg{
+        .fallback_ssid       = WIFI_SSID,
+        .fallback_password   = WIFI_PASSWORD,
         .connect_timeout_ms  = 15'000,
         .max_retries         = 5,
     };
 
-    const bool wifi_ok = (wifi::connect(wifi_cfg) == ESP_OK);
+    const bool wifi_ok = (wifi_manager::connect(wifi_cfg) == ESP_OK);
     if (!wifi_ok) {
         ESP_LOGE(TAG, "Wi-Fi connect failed – running offline (no OTA/commands)");
     } else {
@@ -184,14 +179,16 @@ extern "C" void app_main(void)
     }
 
     /* 5 ── Health monitor ───────────────────────────────────────────────── */
-    health_monitor::register_probe({
-        .name   = "wifi_sta",
-        .probe  = [] {
-            wifi_ap_record_t ap{};
-            return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-        },
-        .weight = 1,
-    });
+    if (wifi_ok) {
+        health_monitor::register_probe({
+            .name   = "wifi_sta",
+            .probe  = [] {
+                wifi_ap_record_t ap{};
+                return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+            },
+            .weight = 1,
+        });
+    }
 
     health_monitor::start({
         .check_interval_ms      = 10'000,

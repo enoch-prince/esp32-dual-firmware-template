@@ -42,6 +42,7 @@ idf_component_register(
     SRCS
         "app_main.cpp"
         "wifi.cpp"
+        "wifi_manager.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -54,6 +55,7 @@ idf_component_register(
         esp_wifi
         esp_event
         esp_netif
+        esp_http_server
         esp_driver_gpio
         mbedtls
         jsmn

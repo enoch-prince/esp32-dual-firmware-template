@@ -2,7 +2,7 @@
  * wifi.cpp
  *
  * Station-mode Wi-Fi with event-driven connection management.
- * Uses C++20 designated initialisers for ESP-IDF config structs.
+ * Uses C++17 designated initialisers for ESP-IDF config structs.
  */
 
 #include "wifi.hpp"
@@ -25,6 +25,10 @@ constexpr EventBits_t kFailed    = BIT1;
 EventGroupHandle_t g_event_group{nullptr};
 uint8_t            g_retry_count{0};
 uint8_t            g_max_retries{5};
+
+bool           s_base_initialized{false};  // esp_netif_init + event loop: once per power cycle
+bool           s_wifi_initialized{false};  // esp_wifi_init: reset by disconnect()
+esp_netif_t   *s_sta_netif{nullptr};
 
 void event_handler(void            *arg,
                    esp_event_base_t base,
@@ -68,12 +72,23 @@ esp_err_t connect(const Config &cfg)
     g_max_retries = cfg.max_retries;
     g_retry_count = 0;
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    if (!s_base_initialized) {
+        ESP_ERROR_CHECK(esp_netif_init());
+        ESP_ERROR_CHECK(esp_event_loop_create_default());
+        s_base_initialized = true;
+    }
 
-    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
+    if (!s_sta_netif) {
+        s_sta_netif = esp_netif_create_default_wifi_sta();
+    }
+
+    if (!s_wifi_initialized) {
+        wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+        ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
+        s_wifi_initialized = true;
+    }
+
+    esp_wifi_stop(); // safe no-op if not yet started; stops cleanly on retry
 
     g_event_group = xEventGroupCreate();
 
@@ -118,6 +133,7 @@ void disconnect()
     esp_wifi_disconnect();
     esp_wifi_stop();
     esp_wifi_deinit();
+    s_wifi_initialized = false;
 }
 
 } // namespace wifi
