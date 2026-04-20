@@ -220,12 +220,12 @@ echo "╚═══════════════════════�
 FLASH_ARGS=(
     --port  "$PORT"
     --baud  "$BAUD"
-    --before default_reset
-    --after  hard_reset
-    write_flash
-    --flash_mode dio
-    --flash_freq 80m
-    --flash_size 4MB
+    --before default-reset
+    --after  hard-reset
+    write-flash
+    --flash-mode dio
+    --flash-freq 80m
+    --flash-size 4MB
 )
 
 if $FLASH_BOOT; then
