@@ -5,6 +5,7 @@
  *   • LED on GPIO4  (blinks at 200 ms — visually distinct from FW-A's 500 ms)
  *   • OTA manifest points to fw_b endpoint
  *   • Slot identity logged as "FirmwareB (ota_1)"
+ *   • Wi-Fi: NVS creds → fallback → AP provisioning portal (same as FW-A)
  */
 
 #include <cstring>
@@ -17,7 +18,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
-#include "wifi.hpp"
+#include "wifi_manager.hpp"
 #include "boot_ctrl.hpp"
 #include "health_monitor.hpp"
 #include "net_cmd.hpp"
@@ -33,7 +34,8 @@ static const char *TAG = "fw_b";
 
 /* ── OTA / command server endpoints  (replace before testing OTA) ────────── */
 // #define OTA_MANIFEST_URL  "https://172.19.189.190:8443/fw_b/manifest.json" //WSL
-#define OTA_MANIFEST_URL  "https://192.168.0.105:8443/fw_b/manifest.json" //Windows
+// #define OTA_MANIFEST_URL  "https://192.168.0.105:8443/fw_b/manifest.json" //Windows
+#define OTA_MANIFEST_URL  "https://192.168.0.104:8443/fw_b/manifest.json"  // Windows
 // #define MQTT_BROKER_URI   "mqtts://mqtt.your-domain.com:8883"
 // #define DEVICE_ID         "esp32-dev-001"
 
@@ -116,14 +118,14 @@ extern "C" void app_main(void)
     xTaskCreate(led_task, "led_b", 2048, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 
     /* 3 ── Wi-Fi ─────────────────────────────────────────────────────────── */
-    const wifi::Config wifi_cfg{
-        .ssid                = WIFI_SSID,
-        .password            = WIFI_PASSWORD,
+    const wifi_manager::Config wifi_cfg{
+        .fallback_ssid       = WIFI_SSID,
+        .fallback_password   = WIFI_PASSWORD,
         .connect_timeout_ms  = 15'000,
         .max_retries         = 5,
     };
 
-    const bool wifi_ok = (wifi::connect(wifi_cfg) == ESP_OK);
+    const bool wifi_ok = (wifi_manager::connect(wifi_cfg) == ESP_OK);
     if (!wifi_ok) {
         ESP_LOGE(TAG, "Wi-Fi connect failed – running offline");
     } else {
@@ -174,14 +176,16 @@ extern "C" void app_main(void)
     }
 
     /* 5 ── Health monitor ───────────────────────────────────────────────── */
-    health_monitor::register_probe({
-        .name   = "wifi_sta",
-        .probe  = [] {
-            wifi_ap_record_t ap{};
-            return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-        },
-        .weight = 1,
-    });
+    if (wifi_ok) {
+        health_monitor::register_probe({
+            .name   = "wifi_sta",
+            .probe  = [] {
+                wifi_ap_record_t ap{};
+                return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+            },
+            .weight = 1,
+        });
+    }
 
     health_monitor::start({
         .check_interval_ms      = 10'000,
